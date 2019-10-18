@@ -1,0 +1,144 @@
+>mongo 10.88.123.63:30092/flowImg -u admin -p Richfit@2019_06//账密连接数据库
+>show collections//展示数据
+
+properties配置文件：
+#mongoDB配置
+spring.data.mongodb.host=11.11.150.50
+spring.data.mongodb.port=30099
+spring.data.mongodb.username=root
+spring.data.mongodb.password=Richfit@2019_06
+spring.data.mongodb.database=flowImg
+#配置文件传输
+spring.servlet.multipart.enabled =true  
+spring.servlet.multipart.file-size-threshold =0
+#单个数据的大小
+spring.servlet.multipart.max-file-size = 5000000
+#总数据的大小
+spring.servlet.multipart.max-request-size = 5000000
+
+
+pom.xml导入依赖：
+<!--mongoDB-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-mongodb</artifactId>
+            <version>2.1.3.RELEASE</version>
+            <type>pom</type>
+        </dependency>
+        <!--文件上传支持-->
+        <dependency>
+            <groupId>commons-fileupload</groupId>
+            <artifactId>commons-fileupload</artifactId>
+            <version>1.2.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.mybatis.spring.boot</groupId>
+            <artifactId>mybatis-spring-boot-starter</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>eu.medsea.mimeutil</groupId>
+            <artifactId>mime-util</artifactId>
+            <version>2.1.3</version>
+        </dependency>
+        <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+        </dependency>
+
+文件上传：
+ /**
+     * @description: 文件上传
+     * @date: 2019/7/8
+     * @param file    //要上传的文件
+     * @param conId  //合同主键  用来绑定合同 1：授权委托书 2：营业执照 3：开户许可证
+     * @param custId //客户主键  用来绑定文件上传者
+     * @author: zxh
+     */
+    @PostMapping("/flowmeter/pictures")
+    public JSONObject uploadPicture(@RequestParam("file") MultipartFile file,
+                                    @RequestParam("conId")String conId,
+                                    @RequestParam("custId")String custId,
+                                    @RequestParam("typeId")String typeId,
+                                    HttpServletRequest request){
+        JSONObject object = new JSONObject();
+        DBObject obj = new BasicDBObject("metadata.conId", conId);
+        BASE64Encoder encoder = new BASE64Encoder();
+        ((BasicDBObject) obj).append("metadata.typeId",typeId);
+        Query query=new BasicQuery(((BasicDBObject) obj).toString());
+        GridFSFile gfsFile = gridFsTemplate.findOne(query);
+        //GridFSFindIterable iter = gridFsTemplate.find(query);
+        if(gfsFile!=null){
+            gridFsTemplate.delete(query);
+        }
+        try {
+                InputStream content = file.getInputStream();
+                String contentType = file.getContentType();
+                String fileName = file.getOriginalFilename();
+                DBObject metadata = new BasicDBObject("conId", conId);
+                ((BasicDBObject) metadata).append("custId", custId);
+                ((BasicDBObject) metadata).append("typeId", typeId);
+                ObjectId id = gridFsTemplate.store(content, fileName, contentType, metadata);
+                System.out.println(id.toString());
+                object.put("result","success");
+                object.put("data",id);
+        }catch(Exception e){
+            object.put("result","fail");
+            System.out.println(e.getMessage());
+        }
+        return object;
+    }
+
+
+文件下载：
+
+ /**
+     * @description: 下载
+     * @date: 2019/7/8
+     * @param id //记录id
+     * @author: zxh
+     */
+    @GetMapping("/flowmeter/pictures/{id}")
+    public JSONObject downloadPicture(@PathVariable String id, HttpServletResponse response)throws Exception  {
+        JSONObject json = new JSONObject();
+        DBObject obj = new BasicDBObject("_id",id);
+        BASE64Encoder encoder = new BASE64Encoder();
+        Query query=new BasicQuery(((BasicDBObject) obj).toString());
+        GridFSFile gfsFile = gridFsTemplate.findOne(query);
+        // mongo-java-driver3.x以上的版本就变成了这种方式获取
+        GridFSBucket bucket = GridFSBuckets.create(mongoDbFactory.getDb());
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        // 获取Mongodb中文件的缓存输出流
+        bucket.downloadToStream(gfsFile.getId(), baos);
+        response.setContentType(gfsFile.getMetadata().get("_contentType").toString());
+        response.setHeader("Content-Disposition", "attachment;filename=\"" + (new String(gfsFile.getFilename().getBytes("utf-8"),"ISO8859-1")) + "\"");
+        try {
+            response.getOutputStream().write(baos.toByteArray());
+            json.put("result","success");
+        } catch (IOException e) {
+            e.printStackTrace();
+            json.put("result","fail");
+        }
+        return json;
+    }
+
+
+获取文件信息：
+@GetMapping("/flowmeter/pictures/findkey")
+    public Map<String,Object> downloadPictures(@RequestParam("conId")String conId){
+        Map<String,Object> data =new HashMap<>();
+        for (int i = 1; i <4; i++) {
+            String typeId = String.valueOf(i);
+            DBObject obj = new BasicDBObject("metadata.conId", conId);
+            BASE64Encoder encoder = new BASE64Encoder();
+            ((BasicDBObject) obj).append("metadata.typeId",typeId);
+            Query query=new BasicQuery(((BasicDBObject) obj).toString());
+            GridFSFile gfsFile = gridFsTemplate.findOne(query);
+            if (gfsFile!=null){
+                data.put("data"+i,gfsFile.getObjectId().toString());
+            }
+        }
+        return data;
+    }
+
